@@ -137,6 +137,23 @@ function xmldb_tincanlaunch_upgrade($oldversion) {
         upgrade_mod_savepoint(true, 2026022502, 'tincanlaunch');
     }
 
+    if ($oldversion < 2026111200) {
+        $table = new xmldb_table('tincanlaunch');
+        $fields = [
+            new xmldb_field('packagehash', XMLDB_TYPE_CHAR, '40', null, null, null, null, 'grade'),
+            new xmldb_field('revision', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, 0, 'packagehash'),
+            new xmldb_field('updatefreq', XMLDB_TYPE_INTEGER, '1', null, XMLDB_NOTNULL, null, 0, 'revision'),
+            new xmldb_field('packageerrorhash', XMLDB_TYPE_CHAR, '40', null, null, null, null, 'updatefreq'),
+        ];
+        foreach ($fields as $field) {
+            if (!$dbman->field_exists($table, $field)) {
+                $dbman->add_field($table, $field);
+            }
+        }
+
+        upgrade_mod_savepoint(true, 2026111200, 'tincanlaunch');
+    }
+
     // Final return of upgrade result (true, all went good) to Moodle.
     return true;
 }

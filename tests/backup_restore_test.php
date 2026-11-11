@@ -42,6 +42,145 @@ require_once($CFG->dirroot . '/mod/tincanlaunch/lib.php');
  */
 final class backup_restore_test extends \advanced_testcase {
     /**
+     * Restoring preserves the Active Revision and reconnects only same-site aliases.
+     *
+     * @dataProvider revision_launches
+     * @param string $launch Launch path including any query and fragment.
+     * @param bool $samesite Whether the backup originates from this site.
+     */
+    public function test_duplicate_preserves_linked_active_revision(string $launch, bool $samesite = true): void {
+        global $CFG, $DB;
+
+        require_once($CFG->dirroot . '/course/modlib.php');
+        require_once($CFG->dirroot . '/repository/lib.php');
+        $this->resetAfterTest();
+        $this->setAdminUser();
+        $this->expectOutputRegex('/.*/');
+        $CFG->backup_file_logger_level = \backup::LOG_NONE;
+        $course = $this->getDataGenerator()->create_course();
+        $activity = $this->getDataGenerator()->create_module('tincanlaunch', [
+            'course' => $course->id,
+            'tincanlaunchtype' => 0,
+            'tincanactivityid' => 'https://example.com/activity',
+            'revision' => 7,
+            'packagehash' => str_repeat('a', 40),
+            'packageerrorhash' => str_repeat('b', 40),
+            'updatefreq' => 2,
+            'grade' => 100,
+        ]);
+        $context = \context_module::instance($activity->cmid);
+        $DB->set_field(
+            'tincanlaunch',
+            'tincanlaunchurl',
+            $CFG->wwwroot . '/pluginfile.php/' . $context->id . '/mod_tincanlaunch/content/7/' . $launch,
+            ['id' => $activity->id]
+        );
+        $directory = make_writable_directory($CFG->dataroot . '/repository/tincanlaunch-backup');
+        $archive = new \ZipArchive();
+        $archive->open($directory . '/package.zip', \ZipArchive::CREATE);
+        $archive->addFromString('tincan.xml', '<tincan/>');
+        $archive->addFromString('index.html', 'Active content');
+        $archive->close();
+        $this->getDataGenerator()->create_repository_type('filesystem');
+        $repository = $this->getDataGenerator()->create_repository('filesystem', ['fs_path' => 'tincanlaunch-backup']);
+        $storage = get_file_storage();
+        $storage->create_file_from_reference([
+            'contextid' => $context->id,
+            'component' => 'mod_tincanlaunch',
+            'filearea' => 'package',
+            'itemid' => 0,
+            'filepath' => '/',
+            'filename' => 'package.zip',
+        ], $repository->id, 'package.zip');
+        $storage->create_file_from_string([
+            'contextid' => $context->id,
+            'component' => 'mod_tincanlaunch',
+            'filearea' => 'content',
+            'itemid' => 7,
+            'filepath' => '/',
+            'filename' => 'index.html',
+        ], 'Active content');
+        $cm = get_coursemodule_from_instance('tincanlaunch', $activity->id);
+
+        $duplicate = $samesite ? duplicate_module($course, $cm) : $this->restore_foreign_activity($course);
+
+        $restored = $DB->get_record('tincanlaunch', ['id' => $duplicate->instance], '*', MUST_EXIST);
+        $this->assertSame(7, (int)$restored->revision);
+        $this->assertSame(str_repeat('a', 40), $restored->packagehash);
+        $this->assertSame($samesite ? 2 : 0, (int)$restored->updatefreq);
+        $this->assertSame(100, (int)$restored->grade);
+        $this->assertNull($restored->packageerrorhash);
+        $newcontext = \context_module::instance($duplicate->id);
+        $this->assertStringContainsString(
+            '/pluginfile.php/' . $newcontext->id . '/mod_tincanlaunch/content/7/' . $launch,
+            $restored->tincanlaunchurl
+        );
+        $content = $storage->get_file($newcontext->id, 'mod_tincanlaunch', 'content', 7, '/', 'index.html');
+        $this->assertSame('Active content', $content->get_content());
+        $packages = $storage->get_area_files($newcontext->id, 'mod_tincanlaunch', 'package', 0, 'id', false);
+        $this->assertCount($samesite ? 1 : 0, $packages);
+        if ($samesite) {
+            $this->assertTrue(reset($packages)->is_external_file());
+        }
+    }
+
+    /**
+     * Local launch URLs supported by existing activities.
+     *
+     * @return array
+     */
+    public static function revision_launches(): array {
+        return [
+            'plain launch' => ['index.html'],
+            'query and fragment' => ['index.html?mode=review&lang=en#slide2'],
+            'foreign site' => ['index.html', false],
+        ];
+    }
+
+    /**
+     * Restore a course backup with a different source site identifier.
+     *
+     * @param \stdClass $course Source course.
+     * @return \stdClass Restored course module.
+     */
+    private function restore_foreign_activity(\stdClass $course): \stdClass {
+        global $DB, $USER;
+
+        $backup = new \backup_controller(
+            \backup::TYPE_1COURSE,
+            $course->id,
+            \backup::FORMAT_MOODLE,
+            \backup::INTERACTIVE_NO,
+            \backup::MODE_GENERAL,
+            $USER->id
+        );
+        $backup->execute_plan();
+        $file = $backup->get_results()['backup_destination'];
+        $directory = 'test-foreign-tincanlaunch';
+        $path = make_backup_temp_directory($directory);
+        $file->extract_to_pathname(get_file_packer('application/vnd.moodle.backup'), $path);
+        $backup->destroy();
+        $manifest = simplexml_load_file($path . '/moodle_backup.xml');
+        $manifest->information->original_site_identifier_hash = 'foreign-site';
+        $manifest->asXML($path . '/moodle_backup.xml');
+        $courseid = \restore_dbops::create_new_course('Foreign restore', 'foreign-restore', $course->category);
+        $restore = new \restore_controller(
+            $directory,
+            $courseid,
+            \backup::INTERACTIVE_NO,
+            \backup::MODE_GENERAL,
+            $USER->id,
+            \backup::TARGET_NEW_COURSE
+        );
+        $this->assertFalse($restore->is_samesite());
+        $restore->execute_precheck();
+        $restore->execute_plan();
+        $restore->destroy();
+        $activity = $DB->get_record('tincanlaunch', ['course' => $courseid], '*', MUST_EXIST);
+        return get_coursemodule_from_instance('tincanlaunch', $activity->id);
+    }
+
+    /**
      * Test backup and restore of a basic tincanlaunch instance.
      */
     public function test_backup_restore_basic(): void {

@@ -27,6 +27,20 @@
 
 defined('MOODLE_INTERNAL') || die();
 
+$string['activityidmismatch'] = 'Das verkn&uuml;pfte Paket wurde nicht aktualisiert, weil sich die Activity-ID von "{$a->current}" zu "{$a->candidate}" ge&auml;ndert hat.';
+$string['everyday'] = 'T&auml;glich';
+$string['manifestactivityidmissing'] = 'Das Paketmanifest enth&auml;lt keine Activity-ID.';
+$string['manifestlaunchmissing'] = 'Das Paketmanifest enth&auml;lt keinen Startpfad.';
+$string['packageextractfailed'] = 'Das Paket konnte nicht entpackt werden.';
+$string['packagefilenotfound'] = 'Die Paketdatei wurde nicht gefunden.';
+$string['packagesourcemissing'] = 'Die Quelle des verkn&uuml;pften Pakets fehlt oder ist nicht verf&uuml;gbar.';
+$string['packagesyncfailed'] = 'Das verkn&uuml;pfte Paket konnte nicht synchronisiert werden: {$a}';
+$string['packageupdateemailbody'] = 'Das verkn&uuml;pfte xAPI-Paket f&uuml;r "{$a->activity}" auf "{$a->site}" wurde nicht aktiviert. Lernende verwenden weiterhin das zuletzt akzeptierte Paket.' . "\n\n" . 'Fehler: {$a->error}';
+$string['packageupdateemailsubject'] = 'xAPI-Paketaktualisierung abgelehnt: {$a->activity}';
+$string['packageupdateinprogress'] = 'Dieses Paket wird bereits aktualisiert. Versuchen Sie es in K&uuml;rze erneut.';
+$string['packageupdatenotlinked'] = 'Nur verkn&uuml;pfte Repository-Pakete k&ouml;nnen aktualisiert werden.';
+$string['packageupdatesuccess'] = 'Das verkn&uuml;pfte Paket wurde aktualisiert.';
+$string['packageupdateunchanged'] = 'Das verkn&uuml;pfte Paket wurde nicht ge&auml;ndert.';
 $string['tincanlaunch_attempt'] = 'Neuer Versuch';
 $string['tincanlaunch_completed'] = 'Erleben Sie komplett!';
 $string['tincanlaunch_notavailable'] = 'Das Learning Record Store ist nicht verf&uuml;gbar. Bitte wenden Sie sich an den Systemadministrator.';
@@ -35,3 +49,9 @@ $string['tincanlaunchviewfirstlaunched'] = 'Zun&auml;chst startete';
 $string['tincanlaunchviewlastlaunched'] = 'Letzte gestartet';
 $string['tincanlaunchviewlaunchlink'] = 'Start';
 $string['tincanlaunchviewlaunchlinkheader'] = 'Start Link';
+$string['updatefreq'] = 'H&auml;ufigkeit der automatischen Aktualisierung';
+$string['updatefreq_error'] = 'Die automatische Aktualisierung kann nur aktiviert werden, wenn die Paketdatei ein Repository-Alias ist.';
+$string['updatefreq_help'] = 'Pr&uuml;ft einen Repository-Alias t&auml;glich auf ein ge&auml;ndertes Paket. Manager k&ouml;nnen die Pr&uuml;fung auch auf der Aktivit&auml;tsseite starten. Hochgeladene Kopien k&ouml;nnen nicht automatisch aktualisiert werden.';
+$string['updatefreqdesc'] = 'Legt fest, ob verkn&uuml;pfte Paketdateien durch die t&auml;gliche geplante Aufgabe gepr&uuml;ft werden.';
+$string['updatepackage'] = 'Nach Paketaktualisierung suchen';
+$string['updatepackagestask'] = 'Verkn&uuml;pfte xAPI-Pakete aktualisieren';

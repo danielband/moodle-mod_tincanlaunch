@@ -25,8 +25,105 @@
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
+use mod_tincanlaunch\local\package;
+use mod_tincanlaunch\local\package_refresh_result;
+
 defined('MOODLE_INTERNAL') || die();
 require_once("$CFG->dirroot/mod/tincanlaunch/lib.php");
+
+/**
+ * Return the available Linked Refresh frequencies.
+ *
+ * @return array
+ */
+function tincanlaunch_get_updatefreq_array() {
+    return [
+        TINCANLAUNCH_UPDATE_NEVER => get_string('never'),
+        TINCANLAUNCH_UPDATE_EVERYDAY => get_string('everyday', 'tincanlaunch'),
+    ];
+}
+
+/**
+ * Refresh Linked Packages opted into daily checks.
+ */
+function tincanlaunch_refresh_packages(): void {
+    global $DB;
+
+    $filestorage = get_file_storage();
+    $packer = get_file_packer('application/zip');
+    $lockfactory = \core\lock\lock_config::get_lock_factory('mod_tincanlaunch_package_update');
+    $activities = $DB->get_recordset('tincanlaunch', [
+        'updatefreq' => TINCANLAUNCH_UPDATE_EVERYDAY,
+        'tincanlaunchtype' => 0,
+    ]);
+    try {
+        foreach ($activities as $activity) {
+            try {
+                $package = new package((int)$activity->id, $DB, $filestorage, $packer, $lockfactory);
+                $result = $package->refresh();
+                if ($result->get_status() === package_refresh_result::UPDATED) {
+                    mtrace('Updated Tin Can package for activity ' . $activity->id . '.');
+                } else if ($result->get_status() === package_refresh_result::BUSY) {
+                    mtrace('Skipped Tin Can activity ' . $activity->id .
+                        ' because an update is already in progress.');
+                } else if ($result->get_status() === package_refresh_result::REJECTED) {
+                    $rejection = $result->get_rejection();
+                    mtrace('Package update rejected for Tin Can activity ' . $activity->id . ': ' .
+                        $rejection->getMessage());
+                    tincanlaunch_notify_package_rejection($activity, $result);
+                }
+            } catch (\Throwable $exception) {
+                mtrace('Unable to update Tin Can activity ' . $activity->id . ': ' . $exception->getMessage());
+            }
+        }
+    } finally {
+        $activities->close();
+    }
+}
+
+/**
+ * Notify the primary administrator once per rejected Candidate Fingerprint.
+ *
+ * @param stdClass $activity
+ * @param package_refresh_result $result
+ * @return bool True when an email was sent.
+ */
+function tincanlaunch_notify_package_rejection(stdClass $activity, package_refresh_result $result): bool {
+    global $DB;
+
+    if ($result->get_status() !== package_refresh_result::REJECTED) {
+        throw new coding_exception('Only a rejected package refresh can be notified.');
+    }
+
+    $rejection = $result->get_rejection();
+    $fingerprint = $rejection->get_fingerprint();
+    if ($fingerprint === '') {
+        $fingerprint = sha1($rejection->errorcode);
+    }
+    if (!empty($activity->packageerrorhash) && hash_equals($activity->packageerrorhash, $fingerprint)) {
+        return false;
+    }
+
+    $site = get_site();
+    $details = (object)[
+        'activity' => format_string($activity->name),
+        'site' => format_string($site->fullname),
+        'error' => $rejection->getMessage(),
+    ];
+    $sent = email_to_user(
+        get_admin(),
+        \core_user::get_noreply_user(),
+        get_string('packageupdateemailsubject', 'mod_tincanlaunch', $details),
+        get_string('packageupdateemailbody', 'mod_tincanlaunch', $details)
+    );
+    if (!$sent) {
+        debugging('Unable to email the primary administrator about a rejected Tin Can package update.');
+        return false;
+    }
+
+    $DB->set_field('tincanlaunch', 'packageerrorhash', $fingerprint, ['id' => $activity->id]);
+    return true;
+}
 
 /**
  * Send a statement that the activity was launched.

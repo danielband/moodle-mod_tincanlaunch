@@ -17,6 +17,7 @@
 defined('MOODLE_INTERNAL') || die('Direct access to this script is forbidden.');
 
 require_once("$CFG->dirroot/course/moodleform_mod.php");
+require_once("$CFG->dirroot/mod/tincanlaunch/locallib.php");
 
 /**
  * The main tincanlaunch configuration form
@@ -70,10 +71,22 @@ class mod_tincanlaunch_mod_form extends moodleform_mod {
         $filemanageroptions['maxbytes'] = 0;
         $filemanageroptions['maxfiles'] = 1;
         $filemanageroptions['subdirs'] = 0;
+        $filemanageroptions['return_types'] = FILE_INTERNAL | FILE_REFERENCE;
 
         $mform->addElement('filemanager', 'packagefile', get_string('tincanpackage', 'tincanlaunch'), null, $filemanageroptions);
         $mform->addHelpButton('packagefile', 'tincanpackage', 'tincanlaunch');
         $mform->hideIf('packagefile', 'tincanlaunchtype', 'eq', 1);
+
+        $mform->addElement(
+            'select',
+            'updatefreq',
+            get_string('updatefreq', 'tincanlaunch'),
+            tincanlaunch_get_updatefreq_array()
+        );
+        $mform->setType('updatefreq', PARAM_INT);
+        $mform->setDefault('updatefreq', $cfgtincanlaunch->updatefreq ?? TINCANLAUNCH_UPDATE_NEVER);
+        $mform->addHelpButton('updatefreq', 'updatefreq', 'tincanlaunch');
+        $mform->hideIf('updatefreq', 'tincanlaunchtype', 'eq', 1);
 
         // Launch URL — shown only for "External URL".
         $mform->addElement('text', 'tincanlaunchurl', get_string('tincanlaunchurl', 'tincanlaunch'), ['size' => '64']);
@@ -390,6 +403,10 @@ class mod_tincanlaunch_mod_form extends moodleform_mod {
     public function data_postprocessing($data) {
         parent::data_postprocessing($data);
 
+        if (!empty($data->tincanlaunchtype)) {
+            $data->updatefreq = TINCANLAUNCH_UPDATE_NEVER;
+        }
+
         if (!empty($data->completionunlocked)) {
             // Turn off completion settings if the checkboxes aren't ticked.
             $suffix = $this->get_suffix();
@@ -431,6 +448,10 @@ class mod_tincanlaunch_mod_form extends moodleform_mod {
             }
         }
 
+        if ($tincanlaunchtype === 0 && empty($data['packagefile']) && !empty($data['updatefreq'])) {
+            $errors['updatefreq'] = get_string('updatefreq_error', 'tincanlaunch');
+        }
+
         if ($tincanlaunchtype === 0 && !empty($data['packagefile'])) {
             $draftitemid = file_get_submitted_draft_itemid('packagefile');
 
@@ -448,11 +469,17 @@ class mod_tincanlaunch_mod_form extends moodleform_mod {
             $fs = get_file_storage();
             $files = $fs->get_area_files($usercontext->id, 'user', 'draft', $draftitemid, 'id', false);
 
-            if (count($files) >= 1) {
-                $file = reset($files);
-                // Validate this TinCan package.
-                $errors = array_merge($errors, tincanlaunch_validate_package($file));
+            if (!$files) {
+                if (!empty($data['updatefreq'])) {
+                    $errors['updatefreq'] = get_string('updatefreq_error', 'tincanlaunch');
+                }
+                return $errors;
             }
+            $file = reset($files);
+            if (!$file->is_external_file() && !empty($data['updatefreq'])) {
+                $errors['updatefreq'] = get_string('updatefreq_error', 'tincanlaunch');
+            }
+            $errors = array_merge($errors, tincanlaunch_validate_package($file));
         }
         return $errors;
     }

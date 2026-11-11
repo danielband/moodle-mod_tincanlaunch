@@ -41,6 +41,17 @@ There are appearance settings that allow various launch settings.
 
 The settings for this module all have help text which can be accessed by clicking the '?' icon next to that setting. 
 
+### Linked package files
+
+The Zip package picker supports Moodle Repository Aliases. Choose **Create an alias/shortcut to the file** when selecting a ZIP from a repository, then choose an update frequency:
+
+* **Never** disables scheduled Linked Refreshes.
+* **Every day** checks the repository from a scheduled task.
+
+Managers can also use **Check for package update** on the activity page. Moodle keeps the Repository Alias and stores extracted, revisioned content for launching. Replace the ZIP at the same repository path to publish a Candidate Revision. A Linked Refresh rejects a changed Activity ID or invalid manifest, preserving the Active Revision. Scheduled Rejections notify the primary site administrator once per Candidate Fingerprint.
+
+Same-site backups and activity duplication preserve the Repository Alias. A restore to another Moodle site cannot recreate arbitrary repository credentials, so it restores the extracted content as a static package and disables automatic Linked Refreshes.
+
 ## Using the plugin
 Depending on the settings chosen during the activity setup, the learner will either directly launch the content (Simplified Launch) or be brought to a Registrations page (Single/Multiple Registrations).
 

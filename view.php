@@ -53,6 +53,16 @@ if ($tincanlaunch->intro) { // Conditions to show the intro can change to look f
     );
 }
 
+$packages = get_file_storage()->get_area_files($context->id, 'mod_tincanlaunch', 'package', 0, 'id', false);
+$package = $packages ? reset($packages) : null;
+if (
+    empty($tincanlaunch->tincanlaunchtype) &&
+    has_capability('moodle/course:manageactivities', $context) && $package && $package->is_external_file()
+) {
+    $updateurl = new \moodle_url('/mod/tincanlaunch/update.php', ['id' => $cm->id]);
+    echo $OUTPUT->single_button($updateurl, get_string('updatepackage', 'tincanlaunch'), 'post');
+}
+
 $getregistrationdatafromlrsstate = tincanlaunch_get_global_parameters_and_get_state(
     tincanlaunch_get_registration_key()
 );

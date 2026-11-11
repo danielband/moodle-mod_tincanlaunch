@@ -51,10 +51,20 @@ class restore_tincanlaunch_activity_structure_step extends restore_activity_stru
      * @param array $data information
      */
     protected function process_tincanlaunch($data) {
-        global $DB;
+        global $CFG, $DB;
+
+        require_once($CFG->dirroot . '/mod/tincanlaunch/lib.php');
 
         $data = (object)$data;
         $data->course = $this->get_courseid();
+        $data->packageerrorhash = null;
+        $data->packagehash = $data->packagehash ?? null;
+        $data->revision = $data->revision ?? 0;
+        if (!isset($data->updatefreq) || !$this->task->is_samesite()) {
+            $data->updatefreq = TINCANLAUNCH_UPDATE_NEVER;
+        } else if ((int)$data->updatefreq === 3) {
+            $data->updatefreq = TINCANLAUNCH_UPDATE_EVERYDAY;
+        }
 
         $newitemid = $DB->insert_record('tincanlaunch', $data);
         $this->apply_activity_instance($newitemid);
@@ -88,6 +98,60 @@ class restore_tincanlaunch_activity_structure_step extends restore_activity_stru
         $this->add_related_files('mod_tincanlaunch', 'intro', null);
         $this->add_related_files('mod_tincanlaunch', 'package', null);
         $this->add_related_files('mod_tincanlaunch', 'content', null);
+
+        $activityid = $this->task->get_activityid();
+        $activity = $DB->get_record('tincanlaunch', ['id' => $activityid], '*', MUST_EXIST);
+        $context = \context_module::instance($this->task->get_moduleid());
+        $contentfiles = get_file_storage()->get_area_files(
+            $context->id,
+            'mod_tincanlaunch',
+            'content',
+            (int)$activity->revision,
+            'id',
+            false
+        );
+        $launchparts = parse_url($activity->tincanlaunchurl);
+        if (!$contentfiles || !preg_match('#/mod_tincanlaunch/content/(.+)$#', $launchparts['path'] ?? '', $matches)) {
+            return;
+        }
+
+        $launch = rawurldecode($matches[1]);
+        $revisionprefix = (int)$activity->revision . '/';
+        if (strpos($launch, $revisionprefix) === 0) {
+            $candidate = substr($launch, strlen($revisionprefix));
+            foreach ($contentfiles as $contentfile) {
+                if (ltrim($contentfile->get_filepath(), '/') . $contentfile->get_filename() === $candidate) {
+                    $launch = $candidate;
+                    break;
+                }
+            }
+        }
+        if (preg_match('#^https?://#i', $launch)) {
+            $activity->tincanlaunchurl = $launch;
+        } else {
+            $activity->tincanlaunchurl = \moodle_url::make_pluginfile_url(
+                $context->id,
+                'mod_tincanlaunch',
+                'content',
+                (int)$activity->revision,
+                '/',
+                ltrim($launch, '/')
+            )->out(false);
+        }
+        if (isset($launchparts['query'])) {
+            $activity->tincanlaunchurl .= '?' . $launchparts['query'];
+        }
+        if (isset($launchparts['fragment'])) {
+            $activity->tincanlaunchurl .= '#' . $launchparts['fragment'];
+        }
+        $DB->update_record('tincanlaunch', $activity);
+    }
+
+    /**
+     * Synchronize the grade item after Moodle has restored the gradebook.
+     */
+    protected function after_restore() {
+        global $DB;
 
         // Recreate the grade item if the activity has grading enabled.
         $activityid = $this->task->get_activityid();

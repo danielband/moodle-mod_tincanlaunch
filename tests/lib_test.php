@@ -436,6 +436,61 @@ final class lib_test extends \advanced_testcase {
     }
 
     /**
+     * Content lookup uses the Active Revision and preserves numeric directory names.
+     *
+     * @dataProvider package_content_paths
+     * @covers ::tincanlaunch_find_package_content
+     * @param array $args Requested path.
+     * @param string|null $expectedcontent Expected file contents, or null when missing.
+     */
+    public function test_find_package_content(array $args, ?string $expectedcontent): void {
+        $activity = $this->getDataGenerator()->create_module('tincanlaunch', [
+            'course' => $this->course->id,
+            'tincanlaunchtype' => 0,
+        ]);
+        $context = \context_module::instance($activity->cmid);
+        $storage = get_file_storage();
+        $filerecord = [
+            'contextid' => $context->id,
+            'component' => 'mod_tincanlaunch',
+            'filearea' => 'content',
+            'itemid' => 7,
+            'filepath' => '/',
+            'filename' => 'index.html',
+        ];
+        $storage->create_file_from_string($filerecord, 'Active content');
+        $filerecord['itemid'] = 6;
+        $storage->create_file_from_string($filerecord, 'Previous content');
+        $filerecord['itemid'] = 7;
+        $filerecord['filepath'] = '/2026/';
+        $storage->create_file_from_string($filerecord, 'Numeric directory content');
+
+        $file = tincanlaunch_find_package_content($context, 7, $args);
+
+        if ($expectedcontent === null) {
+            $this->assertNull($file);
+        } else {
+            $this->assertInstanceOf(\stored_file::class, $file);
+            $this->assertSame($expectedcontent, $file->get_content());
+        }
+    }
+
+    /**
+     * Content paths supported by the library lookup.
+     *
+     * @return array
+     */
+    public static function package_content_paths(): array {
+        return [
+            'unversioned path' => [['index.html'], 'Active content'],
+            'revisioned path' => [['7', 'index.html'], 'Active content'],
+            'previous revision URL' => [['6', 'index.html'], 'Active content'],
+            'numeric directory' => [['2026', 'index.html'], 'Numeric directory content'],
+            'missing file' => [['7', 'missing.html'], null],
+        ];
+    }
+
+    /**
      * Test tincanlaunch_validate_package with no valid tincan.xml.
      */
     public function test_validate_package_no_manifest(): void {
@@ -505,6 +560,52 @@ final class lib_test extends \advanced_testcase {
 
         // Clean up.
         unlink($zippath);
+    }
+
+    /**
+     * Copied uploads cannot opt in to scheduled Linked Refreshes.
+     */
+    public function test_form_rejects_daily_refresh_for_copied_package(): void {
+        global $CFG, $PAGE, $USER;
+
+        require_once($CFG->dirroot . '/course/modlib.php');
+        require_once($CFG->dirroot . '/mod/tincanlaunch/mod_form.php');
+        $PAGE = new \moodle_page();
+        $PAGE->set_course($this->course);
+        $activity = $this->getDataGenerator()->create_module('tincanlaunch', [
+            'course' => $this->course->id,
+            'tincanlaunchtype' => 0,
+        ]);
+        $cm = get_coursemodule_from_instance('tincanlaunch', $activity->id);
+        [$cm, , , $current] = get_moduleinfo_data($cm, $this->course);
+        $draftid = file_get_unused_draft_itemid();
+        $path = make_request_directory() . '/package.zip';
+        $archive = new \ZipArchive();
+        $archive->open($path, \ZipArchive::CREATE);
+        $archive->addFromString('tincan.xml', '<tincan/>');
+        $archive->close();
+        get_file_storage()->create_file_from_pathname([
+            'contextid' => \context_user::instance($USER->id)->id,
+            'component' => 'user',
+            'filearea' => 'draft',
+            'itemid' => $draftid,
+            'filepath' => '/',
+            'filename' => 'package.zip',
+        ], $path);
+        $current->packagefile = $draftid;
+        $current->updatefreq = 2;
+        $current->availabilityconditionsjson = '{"op":"&","c":[],"showc":[]}';
+        $_POST['packagefile'] = $draftid;
+        $_POST['sesskey'] = sesskey();
+        $form = new \mod_tincanlaunch_mod_form($current, 0, $cm, $this->course);
+
+        $errors = $form->validation((array)$current, []);
+
+        $this->assertArrayHasKey('updatefreq', $errors);
+        $this->assertSame(
+            'Auto-update frequency can only be set when the package file is a repository alias.',
+            $errors['updatefreq']
+        );
     }
 
     /**

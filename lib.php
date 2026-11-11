@@ -30,6 +30,12 @@
 
 defined('MOODLE_INTERNAL') || die();
 
+/** @var int Disable scheduled Linked Refreshes. */
+define('TINCANLAUNCH_UPDATE_NEVER', 0);
+
+/** @var int Perform a Linked Refresh daily. */
+define('TINCANLAUNCH_UPDATE_EVERYDAY', 2);
+
 /** @var string Default LRS State API key for storing registration data. */
 define('TINCANLAUNCH_STATE_REGISTRATIONS_KEY_DEFAULT', 'http://tincanapi.co.uk/stateapikeys/registrations');
 
@@ -48,9 +54,6 @@ function tincanlaunch_get_registration_key() {
 
 // TinCanPHP - required for interacting with the LRS in tincanlaunch_get_statements.
 require_once($CFG->dirroot . '/mod/tincanlaunch/tincanphp/autoload.php');
-
-// SCORM library from the SCORM module. Required for its xml2Array class by tincanlaunch_process_new_package.
-require_once($CFG->dirroot . '/mod/scorm/datamodels/scormlib.php');
 
 global $tincanlaunchsettings;
 $tincanlaunchsettings = null;
@@ -474,6 +477,7 @@ function tincanlaunch_get_file_info($browser, $areas, $context, $filearea, $file
  * @return bool false if file not found, does not return if found - just send the file
  */
 function tincanlaunch_pluginfile($course, $cm, $context, $filearea, $args, $forcedownload, array $options = []) {
+    global $DB;
 
     if ($context->contextlevel != CONTEXT_MODULE) {
         return false;
@@ -481,8 +485,6 @@ function tincanlaunch_pluginfile($course, $cm, $context, $filearea, $args, $forc
 
     require_login($course, true, $cm);
 
-    $filename = array_pop($args);
-    $filepath = implode('/', $args);
     if ($filearea === 'content') {
         $lifetime = null;
     } else if ($filearea === 'package') {
@@ -491,8 +493,15 @@ function tincanlaunch_pluginfile($course, $cm, $context, $filearea, $args, $forc
         return false;
     }
 
-    $fs = get_file_storage();
-    $storedfile = $fs->get_file($context->id, 'mod_tincanlaunch', $filearea, 0, '/' . $filepath . '/', $filename);
+    if ($filearea === 'content') {
+        $activerevision = (int)$DB->get_field('tincanlaunch', 'revision', ['id' => $cm->instance], MUST_EXIST);
+        $storedfile = tincanlaunch_find_package_content($context, $activerevision, $args);
+    } else {
+        $fs = get_file_storage();
+        $filename = array_pop($args);
+        $filepath = implode('/', $args);
+        $storedfile = $fs->get_file($context->id, 'mod_tincanlaunch', $filearea, 0, '/' . $filepath . '/', $filename);
+    }
 
     if (!$storedfile || $storedfile->is_directory()) {
         if ($filearea === 'content') { // Return file not found straight away to improve performance.
@@ -551,6 +560,42 @@ It looks like the standard Quiz module does that same thing, so I don't feel so 
 */
 
 /**
+ * Resolve a content request against the Active Revision, including legacy paths.
+ *
+ * @param context_module $context
+ * @param int $activerevision
+ * @param array $args
+ * @return stored_file|null
+ */
+function tincanlaunch_find_package_content(context_module $context, int $activerevision, array $args): ?stored_file {
+    $filestorage = get_file_storage();
+    $paths = [$args];
+    if (isset($args[0]) && ctype_digit((string)$args[0])) {
+        $unversionedargs = $args;
+        array_shift($unversionedargs);
+        $paths[] = $unversionedargs;
+    }
+
+    foreach ($paths as $pathargs) {
+        $filename = array_pop($pathargs);
+        $filepath = implode('/', $pathargs);
+        $file = $filestorage->get_file(
+            $context->id,
+            'mod_tincanlaunch',
+            'content',
+            $activerevision,
+            '/' . $filepath . '/',
+            $filename
+        );
+        if ($file && !$file->is_directory()) {
+            return $file;
+        }
+    }
+
+    return null;
+}
+
+/**
  * Handles uploaded zip packages when a module is added or updated. Unpacks the zip contents
  * and extracts the launch url and activity id from the tincan.xml file.
  * Note: This takes the *first* activity from the tincan.xml file to be the activity intended
@@ -558,16 +603,13 @@ It looks like the standard Quiz module does that same thing, so I don't feel so 
  * Based closely on code from the SCORM and (to a lesser extent) Resource modules.
  *
  * @param object $tincanlaunch An object from the form in mod_form.php
- * @return array empty if no issue is found. Array of error message otherwise
+ * @return bool Whether a package was installed.
  */
 function tincanlaunch_process_new_package($tincanlaunch) {
-    global $DB, $CFG;
+    global $DB;
 
     $cmid = $tincanlaunch->coursemodule;
     $context = context_module::instance($cmid);
-
-    // Reload TinCan instance.
-    $record = $DB->get_record('tincanlaunch', ['id' => $tincanlaunch->id]);
 
     $fs = get_file_storage();
     $fs->delete_area_files($context->id, 'mod_tincanlaunch', 'package');
@@ -580,60 +622,21 @@ function tincanlaunch_process_new_package($tincanlaunch) {
         ['subdirs' => 0, 'maxfiles' => 1]
     );
 
-    // Get filename of zip that was uploaded.
     $files = $fs->get_area_files($context->id, 'mod_tincanlaunch', 'package', 0, '', false);
-    if (count($files) < 1) {
+    if (!$files) {
         return false;
     }
 
-    $zipfile = reset($files);
-    $zipfilename = $zipfile->get_filename();
-
-    $packagefile = false;
-
-    $packagefile = $fs->get_file($context->id, 'mod_tincanlaunch', 'package', 0, '/', $zipfilename);
-
-    $fs->delete_area_files($context->id, 'mod_tincanlaunch', 'content');
-
     $packer = get_file_packer('application/zip');
-    $packagefile->extract_to_storage($packer, $context->id, 'mod_tincanlaunch', 'content', 0, '/');
-
-    // If the tincan.xml file isn't there, don't do try to use it.
-    // This is unlikely as it should have been checked when the file was validated.
-    if ($manifestfile = $fs->get_file($context->id, 'mod_tincanlaunch', 'content', 0, '/', 'tincan.xml')) {
-        $xmltext = $manifestfile->get_content();
-
-        $pattern = '/&(?!\w{2,6};)/';
-        $replacement = '&amp;';
-        $xmltext = preg_replace($pattern, $replacement, $xmltext);
-
-        $objxml = new xml2Array();
-        $manifest = $objxml->parse($xmltext);
-
-        // Update activity id from the first activity in tincan.xml, if it is found.
-        // Skip without error if not. (The Moodle admin will need to enter the id manually).
-        if (isset($manifest[0]["children"][0]["children"][0]["attrs"]["ID"])) {
-            $record->tincanactivityid = $manifest[0]["children"][0]["children"][0]["attrs"]["ID"];
-        }
-
-        // Update launch from the first activity in tincan.xml, if it is found.
-        // Skip if not. (The Moodle admin will need to enter the url manually).
-        foreach ($manifest[0]["children"][0]["children"][0]["children"] as $property) {
-            if ($property["name"] === "LAUNCH") {
-                // If the launch URL already has a scheme (e.g. https://), use it as-is.
-                // Otherwise, build a pluginfile.php URL for locally-hosted content.
-                $scheme = parse_url($property["tagData"], PHP_URL_SCHEME);
-                if (in_array($scheme, [null, false], true)) {
-                    $record->tincanlaunchurl = $CFG->wwwroot . "/pluginfile.php/" . $context->id
-                        . "/mod_tincanlaunch/" . $manifestfile->get_filearea() . "/" . $property["tagData"];
-                } else {
-                    $record->tincanlaunchurl = $property["tagData"];
-                }
-            }
-        }
-    }
-    // Save reference.
-    return $DB->update_record('tincanlaunch', $record);
+    $package = new \mod_tincanlaunch\local\package(
+        (int)$tincanlaunch->id,
+        $DB,
+        $fs,
+        $packer,
+        \core\lock\lock_config::get_lock_factory('mod_tincanlaunch_package_update')
+    );
+    $package->install((int)$tincanlaunch->coursemodule);
+    return true;
 }
 
 /**
@@ -646,6 +649,18 @@ function tincanlaunch_process_new_package($tincanlaunch) {
 function tincanlaunch_validate_package($file) {
     $packer = get_file_packer('application/zip');
     $errors = [];
+    if ($file->is_external_file()) {
+        try {
+            $file->import_external_file_contents();
+        } catch (\Throwable $exception) {
+            $errors['packagefile'] = get_string('packagesyncfailed', 'tincanlaunch', $exception->getMessage());
+            return $errors;
+        }
+        if ($file->get_status()) {
+            $errors['packagefile'] = get_string('packagesourcemissing', 'tincanlaunch');
+            return $errors;
+        }
+    }
     $filelist = $file->list_files($packer);
     if (!is_array($filelist)) {
         $errors['packagefile'] = get_string('badarchive', 'tincanlaunch');

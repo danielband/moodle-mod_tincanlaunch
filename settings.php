@@ -29,6 +29,14 @@ if ($ADMIN->fulltree) {
     require_once($CFG->dirroot . '/mod/tincanlaunch/locallib.php');
     require_once($CFG->dirroot . '/mod/tincanlaunch/settingslib.php');
 
+    $settings->add(new admin_setting_configselect(
+        'tincanlaunch/updatefreq',
+        get_string('updatefreq', 'tincanlaunch'),
+        get_string('updatefreqdesc', 'tincanlaunch'),
+        TINCANLAUNCH_UPDATE_NEVER,
+        tincanlaunch_get_updatefreq_array()
+    ));
+
     // Default display settings.
     $settings->add(new admin_setting_heading(
         'tincanlaunch/tincanlaunchlrsfieldset',

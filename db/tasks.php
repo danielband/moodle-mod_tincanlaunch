@@ -31,4 +31,13 @@ $tasks = [
         'minute' => '01',
         'hour' => '23',
     ],
+    [
+        'classname' => 'mod_tincanlaunch\task\update_packages',
+        'blocking' => 0,
+        'minute' => '17',
+        'hour' => '2',
+        'day' => '*',
+        'month' => '*',
+        'dayofweek' => '*',
+    ],
 ];

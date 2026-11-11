@@ -63,6 +63,7 @@ class restore_tincanlaunch_activity_task extends restore_activity_task {
         $contents = [];
 
         $contents[] = new restore_decode_content('tincanlaunch', ['intro'], 'tincanlaunch');
+        $contents[] = new restore_decode_content('tincanlaunch', ['tincanlaunchurl'], 'tincanlaunch');
 
         return $contents;
     }
